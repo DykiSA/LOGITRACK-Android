@@ -16,7 +16,6 @@ import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.directions.route.AbstractRouting;
 import com.directions.route.Route;
@@ -27,8 +26,6 @@ import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
-import com.google.android.gms.maps.CameraUpdate;
-import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
@@ -40,6 +37,8 @@ import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
 
@@ -62,11 +61,17 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     private Location myLocation; // current position
     private List<LatLng> destinations; // destinations
+    private List<LatLng> reachedDestination; // reached destination
+    private List<Route> mRoutes; // all routes
+    private List<Integer> colorsIndex; // colors for recommended routes
+
+    private List<LatLng> ruinedAreas; // places where the road is ruined
 
     private String TAG = "MainActivity"; // Log
 
     private List<Polyline> polylines; // route lines
     private List<Marker> markers; // marked places
+
     private RoutingType routingType;
 
     private ProgressDialog progressDialog; // UI loading dialog
@@ -95,11 +100,6 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             }
         });
 
-        // set destinations
-        destinations.add(new LatLng(-7.3087487, 112.7322525));
-        destinations.add(new LatLng(-7.261911, 112.748436));
-        destinations.add(new LatLng(-7.288768, 112.7437159));
-
         buildGoogleApi(); // request location update
     }
 
@@ -120,8 +120,21 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         statusDenied = getResources().getString(R.string.status_denied);
 
         destinations = new ArrayList<>();
+        reachedDestination = new ArrayList<>();
+        mRoutes = new ArrayList<>();
+        ruinedAreas = new ArrayList<>();
         polylines = new ArrayList<>();
         markers = new ArrayList<>();
+
+        // set destinations
+        destinations.add(new LatLng(-7.3087487, 112.7322525));
+        destinations.add(new LatLng(-7.261911, 112.748436));
+        destinations.add(new LatLng(-7.288768, 112.7437159));
+
+        colorsIndex = new ArrayList<>();
+        colorsIndex.add(getResources().getColor(R.color.my_green));
+        colorsIndex.add(getResources().getColor(R.color.my_yellow));
+        colorsIndex.add(getResources().getColor(R.color.my_red));
     }
 
     /*******************************************************************
@@ -137,63 +150,55 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         Log.d(TAG, statusText); // print
 
-
+        // Ready -> OTW
         if (Objects.equals(statusText, statusReady.toLowerCase())) {
             // calculate first trip
             Log.d(TAG, "calculate first trip");
             requestFirstTrip();
         }
-
-        if (Objects.equals(statusText, statusDenied.toLowerCase())) {
-            ActivityCompat.requestPermissions(MapsActivity.this, locationPermissions, APP_LOCATION_PERMISSION);
-        }
-
-        this.updateLabel();
-    }
-
-    /**
-     * Update status and button text
-     */
-    private void updateLabel() {
-        Button button = (Button) findViewById(R.id.action_button);
-        TextView statusLabel = (TextView) findViewById(R.id.my_status);
-        String statusText = statusLabel.getText().toString().toLowerCase();
-
-        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            statusLabel.setText(statusDenied);
-            statusLabel.setTextColor(getResources().getColor(R.color.colorAccent));
-            button.setBackground(getResources().getDrawable(R.drawable.my_blue_button));
-            button.setText(R.string.btn_allow);
-            return;
-        }
-
-        // Ready -> OTW
-        if (Objects.equals(statusText, statusReady.toLowerCase())) {
-            statusLabel.setText(statusOTW);
-            statusLabel.setTextColor(getResources().getColor(R.color.my_green));
-            button.setBackground(getResources().getDrawable(R.drawable.my_red_button));
-            button.setText(R.string.btn_mark);
-        }
         // OTW -> Marking
         else if (Objects.equals(statusText, statusOTW.toLowerCase())) {
-            statusLabel.setText(statusTransit);
-            statusLabel.setTextColor(getResources().getColor(R.color.my_yellow));
-            button.setBackground(getResources().getDrawable(R.drawable.my_blue_button));
-            button.setText(R.string.btn_continue);
+            ruinedAreas.add(new LatLng(myLocation.getLatitude(), myLocation.getLongitude()));
         }
         // Transit -> Resume
         else if (Objects.equals(statusText, statusTransit.toLowerCase())) {
-            statusLabel.setText(statusOTW);
-            statusLabel.setTextColor(getResources().getColor(R.color.my_green));
-            button.setBackground(getResources().getDrawable(R.drawable.my_red_button));
-            button.setText(R.string.btn_mark);
+
         }
         // Access Denied -> Ready
         else if (Objects.equals(statusText, statusDenied.toLowerCase())) {
-            statusLabel.setText(statusReady);
-            statusLabel.setTextColor(getResources().getColor(R.color.my_blue));
-            button.setBackground(getResources().getDrawable(R.drawable.my_green_button));
-            button.setText(R.string.btn_start);
+            requestLocationPermissions();
+        }
+    }
+
+    public void setStatusAndButton(StatusEnum statusEnum) {
+        Button button = (Button) findViewById(R.id.action_button);
+        TextView statusLabel = (TextView) findViewById(R.id.my_status);
+
+        switch (statusEnum) {
+            case LOCATION_ACCESS_DENIED:
+                statusLabel.setText(statusDenied);
+                statusLabel.setTextColor(getResources().getColor(R.color.colorAccent));
+                button.setBackground(getResources().getDrawable(R.drawable.my_blue_button));
+                button.setText(R.string.btn_allow);
+                break;
+            case READY:
+                statusLabel.setText(statusReady);
+                statusLabel.setTextColor(getResources().getColor(R.color.my_blue));
+                button.setBackground(getResources().getDrawable(R.drawable.my_green_button));
+                button.setText(R.string.btn_start);
+                break;
+            case ON_THE_WAY:
+                statusLabel.setText(statusOTW);
+                statusLabel.setTextColor(getResources().getColor(R.color.my_green));
+                button.setBackground(getResources().getDrawable(R.drawable.my_red_button));
+                button.setText(R.string.btn_mark);
+                break;
+            case TRANSIT:
+                statusLabel.setText(statusTransit);
+                statusLabel.setTextColor(getResources().getColor(R.color.my_yellow));
+                button.setBackground(getResources().getDrawable(R.drawable.my_blue_button));
+                button.setText(R.string.btn_continue);
+                break;
         }
     }
 
@@ -201,7 +206,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
      * Display loading dialog
      * @param message message to be displayed
      */
-    private void showLoadingDialog(@NonNull String message) {
+    private void showLoadingDialog(String message) {
         hideLoadingDialog();
         progressDialog = new ProgressDialog(this);
         progressDialog.setMessage(message);
@@ -237,7 +242,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     public void enableMyLocation() {
         if (ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED && ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             this.requestLocationPermissions();
-            updateLabel();
+            setStatusAndButton(StatusEnum.LOCATION_ACCESS_DENIED);
             return;
         }
 
@@ -270,7 +275,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             alert.setNegativeButton("Tidak", new DialogInterface.OnClickListener() {
                 @Override
                 public void onClick(DialogInterface dialog, int which) {
-                    updateLabel();
+                    setStatusAndButton(StatusEnum.LOCATION_ACCESS_DENIED);
                 }
             });
         } else {
@@ -290,12 +295,14 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                     }
                 }
 
-                updateLabel();
                 if (allowed) {
+                    setStatusAndButton(StatusEnum.READY);
                     enableMyLocation(); // re-enable my location
 
                     if (googleApiClient.isConnected())
                         onConnected(null);
+                } else {
+                    setStatusAndButton(StatusEnum.READY);
                 }
                 break;
         }
@@ -342,8 +349,28 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
     @Override
     public void onLocationChanged(Location location) {
-        myLocation = location;
         Log.d(TAG, "myLocation"+ location.toString());
+        myLocation = location;
+
+        Location destLocation = new Location("destination");
+        for (LatLng destination : destinations) {
+            destLocation.setLatitude(destination.latitude);
+            destLocation.setLongitude(destination.longitude);
+
+            if (destLocation.distanceTo(myLocation) <= 10) { // a destinations is reached
+                if (destinations.equals(reachedDestination)) { // all destination is already reached
+                    // set status as ready
+                    setStatusAndButton(StatusEnum.READY);
+                    // finish trip
+                    clearRecentTrip();
+                } else { // still need to continue to next trip
+                    // set status as transit
+                    setStatusAndButton(StatusEnum.TRANSIT);
+                    reachedDestination.add(destination);
+                }
+            }
+        }
+
     }
 
     /*******************************************************************
@@ -351,8 +378,8 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     /********************************************************************/
 
     private void requestFirstTrip() {
-        routingType = RoutingType.firstTrip;
-        showLoadingDialog("Menganalisa Rute ...");
+        routingType = RoutingType.FIRST_TRIP;
+        showLoadingDialog("Memindai rute ...");
 
         for (LatLng destination : destinations) {
             LatLng start = new LatLng(myLocation.getLatitude(), myLocation.getLongitude());
@@ -366,15 +393,67 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
     }
 
+    private void requestNextTrip() {
+        routingType = RoutingType.NEXT_TRIP;
+        showLoadingDialog("Memindai rute ...");
+
+        LatLng start = new LatLng(myLocation.getLatitude(), myLocation.getLongitude());
+        LatLng destination = getNearestDestination();
+        Routing routing = new Routing.Builder()
+                .travelMode(AbstractRouting.TravelMode.DRIVING)
+                .withListener(this)
+                .waypoints(start, destination)
+                .key(getResources().getString(R.string.google_place_key))
+                .build();
+        routing.execute();
+    }
+
+    private LatLng getNearestDestination() {
+        List<LatLng> dests = destinations;
+        Collections.sort(dests, new Comparator<LatLng>() {
+            @Override
+            public int compare(LatLng o1, LatLng o2) {
+                Location destLocation1 = new Location("destination");
+                Location destLocation2 = new Location("destination");
+
+                destLocation1.setLatitude(o1.latitude);
+                destLocation1.setLongitude(o1.longitude);
+                destLocation2.setLatitude(o2.latitude);
+                destLocation2.setLongitude(o2.longitude);
+
+                Float distance1 = destLocation1.distanceTo(myLocation);
+                Float distance2 = destLocation1.distanceTo(myLocation);
+                return distance1.compareTo(distance2);
+            }
+        });
+
+        return dests.get(0);
+    }
+
     @Override
     public void onRoutingFailure(RouteException e) {
-//        Log.d(TAG, "route failure");
-//        e.printStackTrace();
+        // LOG
+        Log.d(TAG, "routing failure");
+        e.printStackTrace();
+
+        // show alert
+        AlertDialog.Builder alert = new AlertDialog.Builder(this);
+        alert.setTitle("Gagal mendapatkan rute");
+        alert.setMessage(e.getMessage() + ". Silahkan coba lagi");
+        alert.setCancelable(false);
+        alert.show();
+
+        // throw state back
+        if (routingType == RoutingType.FIRST_TRIP) {
+            setStatusAndButton(StatusEnum.READY); // back to ready status
+        } else {
+            setStatusAndButton(StatusEnum.TRANSIT); // back to transit
+        }
     }
 //
     @Override
     public void onRoutingStart() {
-//        Log.d(TAG, "route starting ...");
+        Log.d(TAG, "routing started ...");
     }
 //
 
@@ -385,58 +464,80 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
      */
     @Override
     public void onRoutingSuccess(ArrayList<Route> routes, int shortestRouteIndex) {
+        switch (routingType) {
+            case FIRST_TRIP:
+                mRoutes.add(routes.get(0));
+                if (mRoutes.size() == 3) {
+                    drawFirstTripRoute();
+                }
+                break;
+            case NEXT_TRIP:
+                mRoutes = routes;
+                break;
+        }
+
         Log.d("shortestRouteIndex", String.valueOf(shortestRouteIndex));
 
-        LatLng start = new LatLng(myLocation.getLatitude(), myLocation.getLongitude());
-        CameraUpdate center = CameraUpdateFactory.newLatLng(start);
-        CameraUpdate zoom = CameraUpdateFactory.zoomTo(16);
-
-        mMap.moveCamera(center);
-        mMap.animateCamera(zoom);
-
-        if(polylines.size()>0) {
-            for (Polyline poly : polylines) {
-                poly.remove();
-            }
-        }
-
-        polylines = new ArrayList<>();
-        //add route(s) to the map.
-        Log.d(TAG, String.valueOf(routes.size()));
-        for (int i = 0; i < routes.size(); i++) {
-            Log.d("routeIndex" + i, routes.get(i).getPolyOptions().getPoints().toString());
-
-            //In case of more than 5 alternative routes
-            // int colorIndex = i % COLORS.length;
-
-            PolylineOptions polyOptions = new PolylineOptions();
-            // polyOptions.color(getResources().getColor(COLORS[colorIndex]));
-            polyOptions.width(10 + i * 3);
-            polyOptions.addAll(routes.get(i).getPoints());
-            // display routes
-            Polyline polyline = mMap.addPolyline(routes.get(i).getPolyOptions());
-            polylines.add(polyline);
-
-            Toast.makeText(getApplicationContext(),"Route "+ (i+1) +": distance - "+ routes.get(i).getDistanceValue()+": duration - "+ routes.get(i).getDurationValue(),Toast.LENGTH_SHORT).show();
-        }
-
-        MarkerOptions options = new MarkerOptions();
-
-        // Start marker
-//        options.position(start);
-//        options.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_BLUE));
-//        mMap.addMarker(options);
-
-        // Destination marker
-        // ...
-
-
-        hideLoadingDialog();
+//        LatLng start = new LatLng(myLocation.getLatitude(), myLocation.getLongitude());
+//        CameraUpdate center = CameraUpdateFactory.newLatLng(start);
+//        CameraUpdate zoom = CameraUpdateFactory.zoomTo(16);
+//
+//        mMap.moveCamera(center);
+//        mMap.animateCamera(zoom);
+//
     }
 
     @Override
     public void onRoutingCancelled() {
 //        Log.d(TAG, "route cancelled");
+    }
+
+
+    private void drawFirstTripRoute() {
+        progressDialog.setMessage("Menganalisa rute");
+        // sorting routes based on nearest destination
+        Collections.sort(mRoutes, new Comparator<Route>() {
+            @Override
+            public int compare(Route o1, Route o2) {
+                Integer distance1 = o1.getDistanceValue();
+                Integer distance2 = o2.getDistanceValue();
+                return distance1.compareTo(distance2);
+            }
+        });
+
+        progressDialog.setMessage("Menggambar jalur");
+        for (int i = 0; i < mRoutes.size(); i++) {
+            Route route = mRoutes.get(i);
+            int polyColor = i < 3 ? colorsIndex.get(i) : colorsIndex.get(colorsIndex.size() - 1);
+
+            PolylineOptions polyOptions = new PolylineOptions();
+            polyOptions.width(10);
+            polyOptions.color(polyColor);
+            polyOptions.addAll(route.getPoints());
+
+            Polyline polyline = mMap.addPolyline(polyOptions);
+            polylines.add(polyline);
+        }
+
+        for (LatLng destination : destinations) {
+            MarkerOptions options = new MarkerOptions();
+            options.position(destination);
+            options.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
+            Marker marker = mMap.addMarker(options);
+            markers.add(marker);
+        }
+
+        // set status as otw
+        setStatusAndButton(StatusEnum.ON_THE_WAY);
+
+        hideLoadingDialog();
+    }
+
+    public void clearRecentTrip() {
+        markers.clear();
+        polylines.clear();
+        reachedDestination.clear();
+        mRoutes.clear();
     }
 
 //
@@ -456,7 +557,14 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 //    }
 }
 
+enum StatusEnum {
+    LOCATION_ACCESS_DENIED,
+    READY,
+    TRANSIT,
+    ON_THE_WAY
+}
+
 enum RoutingType {
-    firstTrip,
-    nextTrip
+    FIRST_TRIP,
+    NEXT_TRIP
 }
