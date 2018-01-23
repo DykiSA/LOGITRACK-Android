@@ -1,4 +1,15 @@
 <resources>
-    <string name="app_name">TrackDirection</string>
-    <string name="title_activity_maps">Map</string>
+    <string name="app_name">Logitrack</string>
+    <string name="title_activity_maps">Logitrack</string>
+
+    <string name="my_status">Status: </string>
+    <string name="status_ready">Ready</string>
+    <string name="status_otw">On The Way</string>
+    <string name="status_transit">Transit</string>
+    <string name="status_denied">Akses Lokasi Ditolak</string>
+
+    <string name="btn_start">Mulai Perjalanan</string>
+    <string name="btn_mark">Tandai Jalan Rusak</string>
+    <string name="btn_continue">Lanjutkan Perjalanan</string>
+    <string name="btn_allow">Izinkan Perminataan</string>
 </resources>

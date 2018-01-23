@@ -22,46 +22,40 @@
         <RelativeLayout
             android:layout_width="fill_parent"
             android:layout_height="match_parent"
-            >
+            android:padding="10dp">
 
             <LinearLayout
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="0dp">
+                android:orientation="vertical">
 
-                <fragment
-                    android:id="@+id/autocomplete_start"
+                <TextView
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="56dp"
-                    android:name="com.google.android.gms.location.places.ui.PlaceAutocompleteFragment"
-                    />
+                    android:textStyle="bold"
+                    android:text="@string/my_status"/>
 
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="5dp"
-                    android:layout_marginRight="56dp"
-                    android:background="@drawable/dotted" />
-
-                <fragment
-                    android:id="@+id/autocomplete_destination"
+                <TextView
+                    android:id="@+id/my_status"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginEnd="56dp"
-                    android:name="com.google.android.gms.location.places.ui.PlaceAutocompleteFragment"
-                    />
+                    android:textColor="@color/my_blue"
+                    android:text="@string/status_ready"/>
 
             </LinearLayout>
 
-            <ImageView
-                android:id="@+id/set_riding"
+            <Button
+                android:id="@+id/action_button"
                 android:layout_centerVertical="true"
-                android:layout_marginRight="10dp"
-                android:layout_alignParentRight="true"
-                android:layout_width="36dp"
-                android:src="@drawable/common_google_signin_btn_icon_dark"
-                android:layout_height="36dp" />
+                android:layout_alignParentEnd="true"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/my_green_button"
+                android:padding="10dp"
+                android:text="@string/btn_start"
+                android:textSize="12dp"
+                android:gravity="center_vertical|center_horizontal"
+                android:textColor="#FFF" />
 
         </RelativeLayout>
 

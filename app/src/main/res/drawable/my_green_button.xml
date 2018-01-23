@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:state_pressed="false">
+        <shape android:shape="rectangle" android:innerRadius="@dimen/cardview_default_radius">
+            <solid android:color="#1bcc6e"/>
+        </shape>
+    </item>
+    <item android:state_pressed="true">
+        <shape android:shape="rectangle" android:innerRadius="@dimen/cardview_default_radius">
+            <solid android:color="#05c26d"/>
+        </shape>
+    </item>
+</selector>
