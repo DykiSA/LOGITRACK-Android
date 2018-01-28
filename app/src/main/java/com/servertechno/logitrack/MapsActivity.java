@@ -1,6 +1,7 @@
 package com.servertechno.logitrack;
 
 import android.Manifest;
+import android.app.Dialog;
 import android.app.ProgressDialog;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
@@ -26,15 +27,20 @@ import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.location.LocationListener;
 import com.google.android.gms.location.LocationRequest;
 import com.google.android.gms.location.LocationServices;
+import com.google.android.gms.maps.CameraUpdate;
+import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
 import com.google.android.gms.maps.OnMapReadyCallback;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.BitmapDescriptorFactory;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.LatLngBounds;
 import com.google.android.gms.maps.model.Marker;
 import com.google.android.gms.maps.model.MarkerOptions;
 import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
+import com.servertechno.logitrack.realm.ConnectorRealm;
+import com.servertechno.logitrack.realm.models.BrokeLevel;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -60,21 +66,23 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     private GoogleApiClient googleApiClient; // to use google play services
 
     private Location myLocation; // current position
+    private StatusEnum myStatus;
     private List<LatLng> destinations; // destinations
     private List<LatLng> reachedDestination; // reached destination
     private List<Route> mRoutes; // all routes
     private List<Integer> colorsIndex; // colors for recommended routes
 
-    private List<LatLng> ruinedAreas; // places where the road is ruined
-
     private String TAG = "MainActivity"; // Log
 
     private List<Polyline> polylines; // route lines
+    private List<Marker> ruinedAreas; // places where the road is ruined
     private List<Marker> markers; // marked places
 
     private RoutingType routingType;
 
     private ProgressDialog progressDialog; // UI loading dialog
+
+    private ConnectorRealm dataConnector;
 
     /*******************************************************************
     /** App Lifecycle
@@ -85,13 +93,18 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_maps);
 
+        // call database connector
+        this.dataConnector = new ConnectorRealm();
+
         // Obtain the SupportMapFragment and get notified when the map is ready to be used.
         SupportMapFragment mapFragment = (SupportMapFragment) getSupportFragmentManager()
                 .findFragmentById(R.id.map);
         mapFragment.getMapAsync(this);
 
+        // init all variables
         this.initializeVariable();
 
+        // get action button from view
         Button actionButton = (Button) findViewById(R.id.action_button);
         actionButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -106,7 +119,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override
     protected void onDestroy() {
         super.onDestroy();
-
+        // disconnect google play services
         if (googleApiClient.isConnected()) googleApiClient.disconnect();
     }
 
@@ -158,11 +171,12 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
         // OTW -> Marking
         else if (Objects.equals(statusText, statusOTW.toLowerCase())) {
-            ruinedAreas.add(new LatLng(myLocation.getLatitude(), myLocation.getLongitude()));
+            // show dialog
+            showMarkChoiceDialog();
         }
         // Transit -> Resume
         else if (Objects.equals(statusText, statusTransit.toLowerCase())) {
-
+            requestNextTrip();
         }
         // Access Denied -> Ready
         else if (Objects.equals(statusText, statusDenied.toLowerCase())) {
@@ -170,10 +184,36 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         }
     }
 
+    private void showMarkChoiceDialog() {
+        final AlertDialog.Builder dlgChoice = new AlertDialog.Builder(this);
+        dlgChoice.setSingleChoiceItems(
+                new CharSequence[]{"Ringan", "Parah"}, -1,
+                new DialogInterface.OnClickListener() {
+                    @Override
+                    public void onClick(DialogInterface dialog, int which) {
+                        Log.d(TAG, "single: " + which);
+                        BrokeLevel level = BrokeLevel.LOW;
+                        if (which == 1) {
+                            level = BrokeLevel.HIGH;
+                        }
+                        dataConnector.createBrokenStreet(
+                                myLocation.getLatitude(),
+                                myLocation.getLongitude(),
+                                level
+                        );
+                        dialog.dismiss();
+                    }
+                }
+        );
+        dlgChoice.setTitle("Pilih tingkat kerusakan");
+        dlgChoice.setNegativeButton("Batal", null);
+        dlgChoice.create().show();
+    }
+
     public void setStatusAndButton(StatusEnum statusEnum) {
         Button button = (Button) findViewById(R.id.action_button);
         TextView statusLabel = (TextView) findViewById(R.id.my_status);
-
+        myStatus = statusEnum;
         switch (statusEnum) {
             case LOCATION_ACCESS_DENIED:
                 statusLabel.setText(statusDenied);
@@ -248,8 +288,14 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         try {
             LocationManager lm = (LocationManager) this.getSystemService(LOCATION_SERVICE);
-            myLocation = lm != null ? lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER) : null;
-            Log.d(TAG, "Last known: "+myLocation.toString());
+            myLocation = lm != null ? lm.getLastKnownLocation(LocationManager.GPS_PROVIDER) : null;
+            if (myLocation != null) {
+                Log.d(TAG, "Last known: "+myLocation.toString());
+
+                LatLng latLng = new LatLng(myLocation.getLatitude(), myLocation.getLongitude());
+                CameraUpdate center = CameraUpdateFactory.newLatLng(latLng);
+                mMap.animateCamera(center);
+            }
         } catch (Exception e) {
             e.printStackTrace();
         }
@@ -280,6 +326,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             });
         } else {
             ActivityCompat.requestPermissions(this, locationPermissions, APP_LOCATION_PERMISSION);
+            Log.d(TAG, "requestLocationPermissions: -");
         }
     }
 
@@ -288,6 +335,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         switch (requestCode) {
             case APP_LOCATION_PERMISSION:
                 boolean allowed = false;
+                Log.d(TAG, "onRequestPermissionsResult: "+ grantResults.toString());
                 if (grantResults.length > 0) {
                     for (int grantResult : grantResults) {
                         if (grantResult == PackageManager.PERMISSION_GRANTED)
@@ -353,24 +401,51 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         myLocation = location;
 
         Location destLocation = new Location("destination");
+
+        if (myStatus != StatusEnum.ON_THE_WAY) return;
+
+        boolean finished = false; // still need to continue to next trip
+        boolean arrived = false;
         for (LatLng destination : destinations) {
             destLocation.setLatitude(destination.latitude);
             destLocation.setLongitude(destination.longitude);
 
-            if (destLocation.distanceTo(myLocation) <= 10) { // a destinations is reached
-                if (destinations.equals(reachedDestination)) { // all destination is already reached
-                    // set status as ready
-                    setStatusAndButton(StatusEnum.READY);
-                    // finish trip
-                    clearRecentTrip();
-                } else { // still need to continue to next trip
-                    // set status as transit
-                    setStatusAndButton(StatusEnum.TRANSIT);
-                    reachedDestination.add(destination);
+            Log.d(TAG, "distance: "+ destLocation.distanceTo(myLocation));
+            if (destLocation.distanceTo(myLocation) <= 20 && !reachedDestination.contains(destination)) { // a destinations is reached
+                arrived = true;
+                reachedDestination.add(destination);
+                if (destinations.size() == reachedDestination.size()) { // all destination is already reached
+                    finished = true;
                 }
             }
         }
+        Log.d("arrived", String.valueOf(arrived));
+        Log.d("finished", String.valueOf(finished));
 
+        if (arrived) {
+            clearRecentTrip();
+            if (finished) {
+                // set status as ready
+                setStatusAndButton(StatusEnum.READY);
+                // finish trip
+                showMessage("Anda telah menyelesaikan perjalanan");
+                reachedDestination.clear();
+            }
+            else {
+                // set status as transit
+                Log.d(TAG, "onLocationChanged: transit");
+                setStatusAndButton(StatusEnum.TRANSIT);
+                showMessage("Anda telah tiba di lokasi ke " + reachedDestination.size());
+            }
+        }
+
+    }
+
+    private void showMessage(String message) {
+        AlertDialog.Builder dlg = new AlertDialog.Builder(this);
+        dlg.setMessage(message);
+        dlg.setPositiveButton("Ok", null);
+        dlg.show();
     }
 
     /*******************************************************************
@@ -402,6 +477,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         Routing routing = new Routing.Builder()
                 .travelMode(AbstractRouting.TravelMode.DRIVING)
                 .withListener(this)
+                .alternativeRoutes(true)
                 .waypoints(start, destination)
                 .key(getResources().getString(R.string.google_place_key))
                 .build();
@@ -427,11 +503,20 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             }
         });
 
+        for (LatLng dest: destinations) {
+            if (reachedDestination.contains(dest)) {
+                dests.remove(dest);
+            }
+        }
+
         return dests.get(0);
     }
 
     @Override
     public void onRoutingFailure(RouteException e) {
+        if (!progressDialog.isShowing()) return;
+
+        progressDialog.dismiss();
         // LOG
         Log.d(TAG, "routing failure");
         e.printStackTrace();
@@ -439,7 +524,8 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         // show alert
         AlertDialog.Builder alert = new AlertDialog.Builder(this);
         alert.setTitle("Gagal mendapatkan rute");
-        alert.setMessage(e.getMessage() + ". Silahkan coba lagi");
+        alert.setMessage(e.getMessage() + ". Silahkan coba lagi!");
+        alert.setPositiveButton("Ok", null);
         alert.setCancelable(false);
         alert.show();
 
@@ -464,27 +550,19 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
      */
     @Override
     public void onRoutingSuccess(ArrayList<Route> routes, int shortestRouteIndex) {
+        Log.d(TAG, "onRoutingSuccess: "+routes.get(0).getPoints().toString());
         switch (routingType) {
             case FIRST_TRIP:
                 mRoutes.add(routes.get(0));
-                if (mRoutes.size() == 3) {
+                if (mRoutes.size() == destinations.size()) {
                     drawFirstTripRoute();
                 }
                 break;
             case NEXT_TRIP:
                 mRoutes = routes;
+                drawNextTripRoute();
                 break;
         }
-
-        Log.d("shortestRouteIndex", String.valueOf(shortestRouteIndex));
-
-//        LatLng start = new LatLng(myLocation.getLatitude(), myLocation.getLongitude());
-//        CameraUpdate center = CameraUpdateFactory.newLatLng(start);
-//        CameraUpdate zoom = CameraUpdateFactory.zoomTo(16);
-//
-//        mMap.moveCamera(center);
-//        mMap.animateCamera(zoom);
-//
     }
 
     @Override
@@ -519,13 +597,20 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             polylines.add(polyline);
         }
 
+        LatLngBounds.Builder boundsBuilder = new LatLngBounds.Builder();
         for (LatLng destination : destinations) {
             MarkerOptions options = new MarkerOptions();
             options.position(destination);
             options.icon(BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_GREEN));
             Marker marker = mMap.addMarker(options);
             markers.add(marker);
+            boundsBuilder.include(destination);
         }
+        boundsBuilder.include(new LatLng(myLocation.getLatitude(), myLocation.getLongitude()));
+        LatLngBounds bounds = boundsBuilder.build();
+
+        CameraUpdate center = CameraUpdateFactory.newLatLngBounds(bounds, 30);
+        mMap.animateCamera(center);
 
         // set status as otw
         setStatusAndButton(StatusEnum.ON_THE_WAY);
@@ -533,11 +618,31 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         hideLoadingDialog();
     }
 
+    private void drawNextTripRoute() {
+        progressDialog.setMessage("Menganalisa rute");
+
+        //
+    }
+
     public void clearRecentTrip() {
+        for (Polyline poly : polylines) {
+            poly.remove();
+        }
+        polylines.clear();
+        mRoutes.clear();
+    }
+
+    public void clearMap() {
+        for (Polyline poly : polylines) {
+            poly.remove();
+        }
+        for (Marker marker : markers) {
+            marker.remove();
+        }
         markers.clear();
         polylines.clear();
-        reachedDestination.clear();
         mRoutes.clear();
+        mMap.clear();
     }
 
 //

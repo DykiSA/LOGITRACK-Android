@@ -8,7 +8,6 @@
     tools:context="com.servertechno.logitrack.MapsActivity">
 
     <android.support.v7.widget.CardView
-        android:id="@+id/cardview"
         android:layout_width="fill_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal|bottom"
