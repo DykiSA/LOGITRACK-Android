@@ -41,12 +41,15 @@ import com.google.android.gms.maps.model.Polyline;
 import com.google.android.gms.maps.model.PolylineOptions;
 import com.servertechno.logitrack.realm.ConnectorRealm;
 import com.servertechno.logitrack.realm.models.BrokeLevel;
+import com.servertechno.logitrack.realm.models.BrokenStreet;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
+
+import io.realm.RealmResults;
 
 public class MapsActivity extends AppCompatActivity implements OnMapReadyCallback, RoutingListener, GoogleApiClient.ConnectionCallbacks, LocationListener {
 
@@ -75,7 +78,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     private String TAG = "MainActivity"; // Log
 
     private List<Polyline> polylines; // route lines
-    private List<Marker> ruinedAreas; // places where the road is ruined
+    private List<Marker> brokenAreas; // places where the road is broken
     private List<Marker> markers; // marked places
 
     private RoutingType routingType;
@@ -135,7 +138,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         destinations = new ArrayList<>();
         reachedDestination = new ArrayList<>();
         mRoutes = new ArrayList<>();
-        ruinedAreas = new ArrayList<>();
+        brokenAreas = new ArrayList<>();
         polylines = new ArrayList<>();
         markers = new ArrayList<>();
 
@@ -201,6 +204,11 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                                 myLocation.getLongitude(),
                                 level
                         );
+                        addBrokenStreetMarker(new LatLng(
+                                myLocation.getLatitude(),
+                                myLocation.getLongitude()
+                            ), level
+                        );
                         dialog.dismiss();
                     }
                 }
@@ -208,6 +216,24 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         dlgChoice.setTitle("Pilih tingkat kerusakan");
         dlgChoice.setNegativeButton("Batal", null);
         dlgChoice.create().show();
+    }
+
+    private void addBrokenStreetMarker(LatLng latLng, BrokeLevel level) {
+        addBrokenStreetMarker(latLng, level.getValue());
+    }
+
+    private void addBrokenStreetMarker(LatLng latLng, int level) {
+        MarkerOptions options = new MarkerOptions();
+        options.position(new LatLng(latLng.latitude, latLng.longitude));
+        String markerTitle = "Ringan";
+        float markerColor = BitmapDescriptorFactory.HUE_ORANGE;
+        if (level == BrokeLevel.HIGH.getValue()) {
+            markerTitle = "Parah";
+            markerColor = BitmapDescriptorFactory.HUE_RED;
+        }
+        options.title("Rusak: "+markerTitle);
+        options.icon(BitmapDescriptorFactory.defaultMarker(markerColor));
+        brokenAreas.add(mMap.addMarker(options));
     }
 
     public void setStatusAndButton(StatusEnum statusEnum) {
@@ -273,7 +299,19 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     @Override
     public void onMapReady(GoogleMap googleMap) {
         mMap = googleMap;
+
         enableMyLocation();
+
+        // load all broken street and draw marker
+        RealmResults<BrokenStreet> streets = this.dataConnector.getBrokenStreets();
+        if (streets.isEmpty()) return;
+        for (BrokenStreet street : streets) {
+            addBrokenStreetMarker(new LatLng(
+                        street.getLatitude(),
+                        street.getLongitude()
+                ), street.getLevel()
+            );
+        }
     }
 
     /**
@@ -414,6 +452,18 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
             if (destLocation.distanceTo(myLocation) <= 20 && !reachedDestination.contains(destination)) { // a destinations is reached
                 arrived = true;
                 reachedDestination.add(destination);
+
+                // remove recent trip marker
+//                List<Marker> currentMarkers = new ArrayList<Marker>(markers);
+//                for (Marker marker : currentMarkers) {
+//                    if (marker.getPosition().latitude == destination.latitude &&
+//                        marker.getPosition().longitude == destination.longitude) {
+//                        markers.remove(marker);
+//                        marker.remove();
+//                    }
+//                }
+
+                // check is trip is finished
                 if (destinations.size() == reachedDestination.size()) { // all destination is already reached
                     finished = true;
                 }
@@ -430,6 +480,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 // finish trip
                 showMessage("Anda telah menyelesaikan perjalanan");
                 reachedDestination.clear();
+                clearMap();
             }
             else {
                 // set status as transit
@@ -485,7 +536,7 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
     }
 
     private LatLng getNearestDestination() {
-        List<LatLng> dests = destinations;
+        List<LatLng> dests = new ArrayList<>(destinations);
         Collections.sort(dests, new Comparator<LatLng>() {
             @Override
             public int compare(LatLng o1, LatLng o2) {
@@ -498,13 +549,13 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
                 destLocation2.setLongitude(o2.longitude);
 
                 Float distance1 = destLocation1.distanceTo(myLocation);
-                Float distance2 = destLocation1.distanceTo(myLocation);
+                Float distance2 = destLocation2.distanceTo(myLocation);
                 return distance1.compareTo(distance2);
             }
         });
 
-        for (LatLng dest: destinations) {
-            if (reachedDestination.contains(dest)) {
+        for (LatLng dest: reachedDestination) {
+            if (dests.contains(dest)) {
                 dests.remove(dest);
             }
         }
@@ -572,18 +623,119 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
 
     private void drawFirstTripRoute() {
+        if (mRoutes.isEmpty()) {
+            hideLoadingDialog();
+            showMessage("Rute tidak ditemukan.");
+            return;
+        }
+
         progressDialog.setMessage("Menganalisa rute");
         // sorting routes based on nearest destination
         Collections.sort(mRoutes, new Comparator<Route>() {
             @Override
             public int compare(Route o1, Route o2) {
+                // get the distance
                 Integer distance1 = o1.getDistanceValue();
                 Integer distance2 = o2.getDistanceValue();
+                // compare them to be re-arranged
                 return distance1.compareTo(distance2);
             }
         });
 
         progressDialog.setMessage("Menggambar jalur");
+
+        // draw lines
+        this.drawRoutesLine();
+
+        hideLoadingDialog();
+
+        // set status as otw
+        setStatusAndButton(StatusEnum.ON_THE_WAY);
+    }
+
+    private void drawNextTripRoute() {
+        if (mRoutes.isEmpty()) {
+            showMessage("Rute tidak ditemukan");
+            hideLoadingDialog();
+            return;
+        }
+        progressDialog.setMessage("Menganalisa rute");
+
+        // sort the routes by weight of broken street
+        Collections.sort(mRoutes, new Comparator<Route>() {
+            @Override
+            public int compare(Route o1, Route o2) {
+                // calculate the weight
+                Integer weight1 = calculateWeightOfRoutes(o1);
+                Integer weight2 = calculateWeightOfRoutes(o2);
+
+                // compare them to be re-arranged
+                return weight1.compareTo(weight2);
+            }
+        });
+
+        progressDialog.setMessage("Menggambar jalur");
+
+        // draw lines
+        this.drawRoutesLine();
+
+        hideLoadingDialog();
+
+        // set status as otw
+        setStatusAndButton(StatusEnum.ON_THE_WAY);
+    }
+
+    /**
+     * Calculate weight of a route's point
+     * @param route the routes
+     * @return weight of the route
+     */
+    public int calculateWeightOfRoutes(Route route) {
+        // get the data
+        int weightOfBrokenStreet = findWeightFromMatchedBrokenStreet(route.getPoints());
+        int distanceOfRoute = route.getDistanceValue();
+
+        /*
+         * pattern:
+         * W = D / 100 * B
+         * W: Weight
+         * D: Distance
+         * B: Broken
+         */
+        return distanceOfRoute / 100 * weightOfBrokenStreet;
+    }
+
+    /**
+     * Get weight from matched broken street
+     * @param points the list of route lat long
+     * @return weight of the broken street
+     */
+    public int findWeightFromMatchedBrokenStreet(List<LatLng> points) {
+        // get broken street
+        RealmResults<BrokenStreet> brokenStreets = this.dataConnector.getBrokenStreets();
+        Location pointLoc = new Location("Location of Points");
+        int sumWeight = 0;
+        // loop through all way points
+        for (LatLng latLng : points) {
+            pointLoc.setLatitude(latLng.latitude);
+            pointLoc.setLongitude(latLng.longitude);
+
+            Location brokenLoc = new Location("Location of BrokenStreet");
+
+            // loop through all broken areas
+            for (BrokenStreet brokenStreet : brokenStreets) {
+                brokenLoc.setLatitude(brokenStreet.getLatitude());
+                brokenLoc.setLongitude(brokenStreet.getLongitude());
+
+                // if broken street is inside the point
+                if (pointLoc.distanceTo(brokenLoc) < 10)
+                    sumWeight += brokenStreet.getLevel(); // sum it
+            }
+        }
+        return sumWeight;
+    }
+
+    public void drawRoutesLine() {
         for (int i = 0; i < mRoutes.size(); i++) {
             Route route = mRoutes.get(i);
             int polyColor = i < 3 ? colorsIndex.get(i) : colorsIndex.get(colorsIndex.size() - 1);
@@ -611,17 +763,6 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
 
         CameraUpdate center = CameraUpdateFactory.newLatLngBounds(bounds, 30);
         mMap.animateCamera(center);
-
-        // set status as otw
-        setStatusAndButton(StatusEnum.ON_THE_WAY);
-
-        hideLoadingDialog();
-    }
-
-    private void drawNextTripRoute() {
-        progressDialog.setMessage("Menganalisa rute");
-
-        //
     }
 
     public void clearRecentTrip() {
@@ -642,7 +783,6 @@ public class MapsActivity extends AppCompatActivity implements OnMapReadyCallbac
         markers.clear();
         polylines.clear();
         mRoutes.clear();
-        mMap.clear();
     }
 
 //

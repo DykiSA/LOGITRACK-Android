@@ -47,8 +47,7 @@ public class ConnectorRealm {
 
     public BrokenStreet createBrokenStreet(double latitude, double longitude, BrokeLevel level) {
         this.realm.beginTransaction();
-        BrokenStreet record = this.realm.createObject(BrokenStreet.class);
-        record.setUuid(UUID.randomUUID().toString());
+        BrokenStreet record = this.realm.createObject(BrokenStreet.class, UUID.randomUUID().toString());
         record.setLatitude(latitude);
         record.setLongitude(longitude);
         record.setLevel(level.getValue());
